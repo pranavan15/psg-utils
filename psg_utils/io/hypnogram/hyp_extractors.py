@@ -52,34 +52,80 @@ def extract_from_start_dur_stage(file_path, **kwargs):
 
 def extract_from_xml(file_path, **kwargs):
     """
-    Extracts hypnograms from NSRR XML formatted annotation files.
+    Extracts hypnograms from NSRR or Profusion XML formatted annotation files.
 
     Returns:
         A StartDurationStageFormat object
     """
     import xml.etree.ElementTree as ET
-    events = ET.parse(file_path).findall('ScoredEvents')
-    assert len(events) == 1
-    stage_dict = {
-        "Wake|0": "W",
-        "Stage 1 sleep|1": "N1",
-        "Stage 2 sleep|2": "N2",
-        "Stage 3 sleep|3": "N3",
-        "Stage 4 sleep|4": "N3",
-        "REM sleep|5": "REM",
-        "Movement|6": "UNKNOWN",
-        "Unscored|9": "UNKNOWN"
-    }
+    
+    tree = ET.parse(file_path)
+    root = tree.getroot()
+    
     starts, durs, stages = [], [], []
-    for event in events[0]:
-        if not event[0].text == "Stages|Stages":
-            continue
-        stage = stage_dict[event[1].text]
-        start = int(float(event[2].text))
-        dur = int(float(event[3].text))
-        starts.append(start)
-        durs.append(dur)
-        stages.append(stage)
+    
+    if root.tag == 'PSGAnnotation': # NSRR
+        events = root.findall('ScoredEvents')
+        assert len(events) == 1
+        stage_dict = {
+            "Wake|0": "W",
+            "Stage 1 sleep|1": "N1",
+            "Stage 2 sleep|2": "N2",
+            "Stage 3 sleep|3": "N3",
+            "Stage 4 sleep|4": "N3",
+            "REM sleep|5": "REM",
+            "Movement|6": "UNKNOWN",
+            "Unscored|9": "UNKNOWN"
+        }
+        for event in events[0]:
+            if not event[0].text == "Stages|Stages":
+                continue
+            stage = stage_dict[event[1].text]
+            start = int(float(event[2].text))
+            dur = int(float(event[3].text))
+            starts.append(start)
+            durs.append(dur)
+            stages.append(stage)
+            
+    elif root.tag == 'CMPStudyConfig': # Profusion
+        sleep_stages = root.findall('SleepStages')
+        assert len(sleep_stages) == 1
+        epoch_length = int(root.find('EpochLength').text)
+        stage_dict = {
+            "0": "W",
+            "1": "N1",
+            "2": "N2",
+            "3": "N3",
+            "5": "REM",
+            "default": "UNKNOWN"
+        }
+        current_stage = None
+        current_start = None
+        counter = 0
+        for stage_elem in sleep_stages[0]:
+            stage = stage_dict.get(stage_elem.text, stage_dict["default"])
+            if current_stage is None:
+                # First stage encountered
+                current_stage = stage
+                current_start = counter * epoch_length
+            elif stage != current_stage:
+                # A change in stage encountered; record previous stage details
+                starts.append(current_start)
+                durs.append(counter * epoch_length - current_start)
+                stages.append(current_stage)
+                # Update current stage and current start
+                current_stage = stage
+                current_start = counter * epoch_length
+            counter += 1
+        # Handle the last stage encountered
+        if current_stage is not None:
+            starts.append(current_start)
+            durs.append(counter * epoch_length - current_start)
+            stages.append(current_stage)
+            
+    else:
+        raise NotImplementedError(f"Cannot Extract hypnograms from XML file {file_path}. Functionality for \"{root.tag}\" root type not implemented yet.")
+            
     return StartDurationStageFormat((starts, durs, stages))
 
 
